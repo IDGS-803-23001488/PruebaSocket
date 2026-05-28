@@ -1,0 +1,6 @@
+@PruebaSocket_HostAddress = http://localhost:5260
+
+GET {{PruebaSocket_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
