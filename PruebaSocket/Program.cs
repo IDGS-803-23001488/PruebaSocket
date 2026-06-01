@@ -66,6 +66,11 @@ app.Map("/ws", async context =>
     }
 
     var socket = await context.WebSockets.AcceptWebSocketAsync();
+    if (sockets.TryGetValue(deviceKey, out var previousSocket) && previousSocket.State == WebSocketState.Open)
+    {
+        await previousSocket.CloseAsync(WebSocketCloseStatus.PolicyViolation, "DeviceKey duplicado", CancellationToken.None);
+    }
+
     sockets[deviceKey] = socket;
 
     await using var scope = app.Services.CreateAsyncScope();
@@ -80,10 +85,21 @@ app.Map("/ws", async context =>
     }
     finally
     {
-        sockets.TryRemove(deviceKey, out _);
+        if (sockets.TryGetValue(deviceKey, out var currentSocket) && ReferenceEquals(currentSocket, socket))
+        {
+            sockets.TryRemove(deviceKey, out _);
+        }
+
         Console.WriteLine($"ESP32 desconectado: {deviceKey}");
     }
 });
+
+app.MapGet("/connected-devices", () =>
+    sockets
+        .Where(socket => socket.Value.State == WebSocketState.Open)
+        .Select(socket => socket.Key)
+        .OrderBy(deviceKey => deviceKey)
+        .ToList());
 
 app.MapGet("/devices", async (ApplicationDbContext db) =>
     await db.Esp32Devices

@@ -96,7 +96,7 @@
 
     .metrics {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 12px;
       margin-bottom: 16px;
     }
@@ -119,6 +119,14 @@
       display: block;
       margin-top: 6px;
       font-size: 24px;
+    }
+
+    .devices {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      min-height: 31px;
+      margin: 4px 0 16px;
     }
 
     .table-wrap {
@@ -245,7 +253,13 @@
         <label>Fallidos</label>
         <strong id="failedCount">0</strong>
       </div>
+      <div class="metric">
+        <label>Conectados</label>
+        <strong id="connectedCount">0</strong>
+      </div>
     </section>
+
+    <section class="devices" id="connectedDevices" aria-label="ESP32 conectados"></section>
 
     <section class="table-wrap" aria-label="Mensajes">
       <table>
@@ -274,6 +288,8 @@
     const totalCount = document.querySelector("#totalCount");
     const processedCount = document.querySelector("#processedCount");
     const failedCount = document.querySelector("#failedCount");
+    const connectedCount = document.querySelector("#connectedCount");
+    const connectedDevices = document.querySelector("#connectedDevices");
     const messages = new Map();
 
     function setStatus(text, state) {
@@ -336,6 +352,16 @@
       failedCount.textContent = ordered.filter(message => !message.wasProcessed).length;
     }
 
+    async function loadConnectedDevices() {
+      const response = await fetch("/connected-devices");
+      const devices = await response.json();
+
+      connectedCount.textContent = devices.length;
+      connectedDevices.innerHTML = devices.length === 0
+        ? '<span class="pill bad">Sin ESP32 conectados</span>'
+        : devices.map(device => `<span class="pill ok mono">${escapeHtml(device)}</span>`).join("");
+    }
+
     async function loadInitialMessages() {
       const response = await fetch("/messages");
       const data = await response.json();
@@ -360,10 +386,16 @@
     }
 
     loadInitialMessages()
-      .then(connectStream)
+      .then(() => {
+        connectStream();
+        loadConnectedDevices();
+        setInterval(loadConnectedDevices, 3000);
+      })
       .catch(() => {
         rows.innerHTML = '<tr><td class="empty" colspan="6">No se pudieron cargar los mensajes</td></tr>';
         connectStream();
+        loadConnectedDevices();
+        setInterval(loadConnectedDevices, 3000);
       });
   </script>
 </body>
