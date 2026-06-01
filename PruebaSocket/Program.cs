@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text;
+using System.Text.Json;
+using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
 using PruebaSocket.Data;
 using PruebaSocket.Models;
@@ -25,6 +27,9 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 var runtimeMode = Environment.GetEnvironmentVariable("APP_RUNTIME_MODE") ?? "LocalDebug";
 if (!string.Equals(runtimeMode, "LocalDebug", StringComparison.OrdinalIgnoreCase))
 {
@@ -39,6 +44,8 @@ app.UseWebSockets(new WebSocketOptions
 });
 
 var sockets = new ConcurrentDictionary<string, WebSocket>(StringComparer.OrdinalIgnoreCase);
+var messageStreams = new ConcurrentDictionary<Guid, Channel<MessageEvent>>();
+var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 
 app.Map("/ws", async context =>
 {
@@ -69,7 +76,7 @@ app.Map("/ws", async context =>
 
     try
     {
-        await ReceiveMessagesAsync(socket, sourceDevice.Id, targetDeviceKey, sockets, app.Services, context.RequestAborted);
+        await ReceiveMessagesAsync(socket, sourceDevice.Id, targetDeviceKey, sockets, messageStreams, app.Services, context.RequestAborted);
     }
     finally
     {
@@ -124,18 +131,44 @@ app.MapGet("/messages", async (ApplicationDbContext db) =>
         .Include(message => message.TargetDevice)
         .OrderByDescending(message => message.CreatedAtUtc)
         .Take(100)
-        .Select(message => new
-        {
+        .Select(message => new MessageEvent(
             message.Id,
-            SourceDevice = message.SourceDevice.DeviceKey,
-            TargetDevice = message.TargetDevice == null ? null : message.TargetDevice.DeviceKey,
+            message.SourceDevice.DeviceKey,
+            message.TargetDevice == null ? null : message.TargetDevice.DeviceKey,
             message.Message,
             message.Response,
             message.WasProcessed,
             message.ProcessingError,
-            message.CreatedAtUtc
-        })
+            message.CreatedAtUtc))
         .ToListAsync());
+
+app.MapGet("/message-events", async context =>
+{
+    context.Response.Headers.CacheControl = "no-cache";
+    context.Response.Headers.Connection = "keep-alive";
+    context.Response.ContentType = "text/event-stream";
+
+    var clientId = Guid.NewGuid();
+    var channel = Channel.CreateUnbounded<MessageEvent>();
+    messageStreams[clientId] = channel;
+
+    try
+    {
+        await context.Response.WriteAsync("event: connected\ndata: {}\n\n", context.RequestAborted);
+        await context.Response.Body.FlushAsync(context.RequestAborted);
+
+        await foreach (var message in channel.Reader.ReadAllAsync(context.RequestAborted))
+        {
+            var payload = JsonSerializer.Serialize(message, jsonOptions);
+            await context.Response.WriteAsync($"event: message\ndata: {payload}\n\n", context.RequestAborted);
+            await context.Response.Body.FlushAsync(context.RequestAborted);
+        }
+    }
+    finally
+    {
+        messageStreams.TryRemove(clientId, out _);
+    }
+});
 
 app.MapGet("/encender", async (ApplicationDbContext db) =>
 {
@@ -153,14 +186,17 @@ app.MapGet("/encender", async (ApplicationDbContext db) =>
         enviados++;
     }
 
-    db.Esp32Messages.Add(new Esp32Message
+    var log = new Esp32Message
     {
         SourceDeviceId = await GetOrCreateServerDeviceIdAsync(db),
         Message = "LED_ON",
         Response = $"Comando enviado a {enviados} socket(s).",
         WasProcessed = enviados > 0
-    });
+    };
+
+    db.Esp32Messages.Add(log);
     await db.SaveChangesAsync();
+    PublishMessage(messageStreams, new MessageEvent(log.Id, "server", null, log.Message, log.Response, log.WasProcessed, log.ProcessingError, log.CreatedAtUtc));
 
     return $"Comando enviado a {enviados} socket(s).";
 });
@@ -175,6 +211,7 @@ static async Task ReceiveMessagesAsync(
     int sourceDeviceId,
     string targetDeviceKey,
     ConcurrentDictionary<string, WebSocket> sockets,
+    ConcurrentDictionary<Guid, Channel<MessageEvent>> messageStreams,
     IServiceProvider services,
     CancellationToken cancellationToken)
 {
@@ -191,7 +228,7 @@ static async Task ReceiveMessagesAsync(
         }
 
         var message = Encoding.UTF8.GetString(buffer, 0, result.Count);
-        await ProcessEsp32MessageAsync(sourceDeviceId, targetDeviceKey, message, sockets, services, cancellationToken);
+        await ProcessEsp32MessageAsync(sourceDeviceId, targetDeviceKey, message, sockets, messageStreams, services, cancellationToken);
     }
 }
 
@@ -200,6 +237,7 @@ static async Task ProcessEsp32MessageAsync(
     string targetDeviceKey,
     string message,
     ConcurrentDictionary<string, WebSocket> sockets,
+    ConcurrentDictionary<Guid, Channel<MessageEvent>> messageStreams,
     IServiceProvider services,
     CancellationToken cancellationToken)
 {
@@ -248,6 +286,31 @@ static async Task ProcessEsp32MessageAsync(
 
     db.Esp32Messages.Add(log);
     await db.SaveChangesAsync(cancellationToken);
+
+    var sourceDeviceKey = await db.Esp32Devices
+        .Where(device => device.Id == sourceDeviceId)
+        .Select(device => device.DeviceKey)
+        .FirstAsync(cancellationToken);
+
+    PublishMessage(messageStreams, new MessageEvent(
+        log.Id,
+        sourceDeviceKey,
+        targetDevice?.DeviceKey,
+        log.Message,
+        log.Response,
+        log.WasProcessed,
+        log.ProcessingError,
+        log.CreatedAtUtc));
+}
+
+static void PublishMessage(
+    ConcurrentDictionary<Guid, Channel<MessageEvent>> messageStreams,
+    MessageEvent message)
+{
+    foreach (var stream in messageStreams.Values)
+    {
+        stream.Writer.TryWrite(message);
+    }
 }
 
 static async Task<Esp32Device> RegisterOrUpdateDeviceAsync(
@@ -372,3 +435,13 @@ static void LoadEnvFile()
 }
 
 public sealed record CreateDeviceRequest(string DeviceKey, string Name, string? Description);
+
+public sealed record MessageEvent(
+    long Id,
+    string SourceDevice,
+    string? TargetDevice,
+    string Message,
+    string? Response,
+    bool WasProcessed,
+    string? ProcessingError,
+    DateTime CreatedAtUtc);

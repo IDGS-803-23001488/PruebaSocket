@@ -66,9 +66,11 @@ Cuando `esp32-a` envie un mensaje, el servidor intentara reenviarlo a `esp32-b` 
 
 ## Endpoints
 
+- `GET /`: pantalla web para ver mensajes ESP32 en tiempo real.
 - `GET /devices`: lista los ESP32 registrados.
 - `POST /devices`: registra manualmente un ESP32.
 - `GET /messages`: lista los ultimos 100 mensajes registrados.
+- `GET /message-events`: stream SSE usado por la pantalla web.
 - `GET /encender`: envia `LED_ON` a todos los sockets abiertos y registra el intento.
 
 Ejemplo para registrar un ESP32:

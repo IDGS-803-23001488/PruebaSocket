@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PruebaSocket</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --ink: #1d252d;
+      --muted: #687380;
+      --line: #d9dee5;
+      --ok: #16784f;
+      --warn: #9a5b00;
+      --bad: #a83232;
+      --accent: #1f6feb;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 15px;
+      letter-spacing: 0;
+    }
+
+    header {
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .shell {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+    }
+
+    .topbar {
+      display: flex;
+      min-height: 72px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 700;
+    }
+
+    .subtitle {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .status {
+      display: inline-flex;
+      min-height: 34px;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0 12px;
+      background: #fbfcfd;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: var(--warn);
+    }
+
+    .status.live .dot {
+      background: var(--ok);
+    }
+
+    .status.offline .dot {
+      background: var(--bad);
+    }
+
+    main {
+      padding: 22px 0 34px;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel);
+      padding: 14px 16px;
+    }
+
+    .metric label {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+
+    .metric strong {
+      display: block;
+      margin-top: 6px;
+      font-size: 24px;
+    }
+
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel);
+    }
+
+    table {
+      width: 100%;
+      min-width: 880px;
+      border-collapse: collapse;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid var(--line);
+      padding: 11px 12px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #f9fafb;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .mono {
+      font-family: Consolas, "Courier New", monospace;
+    }
+
+    .message {
+      max-width: 330px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .pill {
+      display: inline-flex;
+      min-height: 24px;
+      align-items: center;
+      border-radius: 999px;
+      padding: 0 9px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .pill.ok {
+      background: #e8f5ef;
+      color: var(--ok);
+    }
+
+    .pill.bad {
+      background: #fdecec;
+      color: var(--bad);
+    }
+
+    .empty {
+      padding: 28px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    @media (max-width: 720px) {
+      .topbar,
+      .metrics {
+        grid-template-columns: 1fr;
+      }
+
+      .topbar {
+        align-items: flex-start;
+        flex-direction: column;
+        justify-content: center;
+        padding: 14px 0;
+      }
+
+      .metrics {
+        display: grid;
+      }
+
+      h1 {
+        font-size: 21px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="shell topbar">
+      <div>
+        <h1>PruebaSocket</h1>
+        <p class="subtitle">Mensajes ESP32 en tiempo real</p>
+      </div>
+      <div id="streamStatus" class="status">
+        <span class="dot"></span>
+        <span>Conectando</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="metrics" aria-label="Resumen">
+      <div class="metric">
+        <label>Total</label>
+        <strong id="totalCount">0</strong>
+      </div>
+      <div class="metric">
+        <label>Procesados</label>
+        <strong id="processedCount">0</strong>
+      </div>
+      <div class="metric">
+        <label>Fallidos</label>
+        <strong id="failedCount">0</strong>
+      </div>
+    </section>
+
+    <section class="table-wrap" aria-label="Mensajes">
+      <table>
+        <thead>
+          <tr>
+            <th>Hora</th>
+            <th>Origen</th>
+            <th>Destino</th>
+            <th>Mensaje</th>
+            <th>Respuesta</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody id="messageRows">
+          <tr>
+            <td class="empty" colspan="6">Cargando mensajes</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <script>
+    const rows = document.querySelector("#messageRows");
+    const status = document.querySelector("#streamStatus");
+    const totalCount = document.querySelector("#totalCount");
+    const processedCount = document.querySelector("#processedCount");
+    const failedCount = document.querySelector("#failedCount");
+    const messages = new Map();
+
+    function setStatus(text, state) {
+      status.className = `status ${state}`;
+      status.querySelector("span:last-child").textContent = text;
+    }
+
+    function formatDate(value) {
+      return new Intl.DateTimeFormat("es-MX", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        day: "2-digit",
+        month: "2-digit"
+      }).format(new Date(value));
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll("\"", "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function addMessage(message) {
+      messages.set(message.id, message);
+      renderMessages();
+    }
+
+    function renderMessages() {
+      const ordered = Array.from(messages.values())
+        .sort((left, right) => new Date(right.createdAtUtc) - new Date(left.createdAtUtc))
+        .slice(0, 100);
+
+      if (ordered.length === 0) {
+        rows.innerHTML = '<tr><td class="empty" colspan="6">Sin mensajes todavia</td></tr>';
+      } else {
+        rows.innerHTML = ordered.map(message => {
+          const stateClass = message.wasProcessed ? "ok" : "bad";
+          const stateText = message.wasProcessed ? "Procesado" : "Pendiente";
+          const response = message.processingError || message.response || "";
+
+          return `
+            <tr>
+              <td class="mono">${formatDate(message.createdAtUtc)}</td>
+              <td class="mono">${escapeHtml(message.sourceDevice)}</td>
+              <td class="mono">${escapeHtml(message.targetDevice || "-")}</td>
+              <td class="message mono">${escapeHtml(message.message)}</td>
+              <td class="message">${escapeHtml(response)}</td>
+              <td><span class="pill ${stateClass}">${stateText}</span></td>
+            </tr>
+          `;
+        }).join("");
+      }
+
+      totalCount.textContent = ordered.length;
+      processedCount.textContent = ordered.filter(message => message.wasProcessed).length;
+      failedCount.textContent = ordered.filter(message => !message.wasProcessed).length;
+    }
+
+    async function loadInitialMessages() {
+      const response = await fetch("/messages");
+      const data = await response.json();
+      data.forEach(addMessage);
+      renderMessages();
+    }
+
+    function connectStream() {
+      const events = new EventSource("/message-events");
+
+      events.addEventListener("connected", () => {
+        setStatus("En vivo", "live");
+      });
+
+      events.addEventListener("message", event => {
+        addMessage(JSON.parse(event.data));
+      });
+
+      events.onerror = () => {
+        setStatus("Reconectando", "offline");
+      };
+    }
+
+    loadInitialMessages()
+      .then(connectStream)
+      .catch(() => {
+        rows.innerHTML = '<tr><td class="empty" colspan="6">No se pudieron cargar los mensajes</td></tr>';
+        connectStream();
+      });
+  </script>
+</body>
+</html>
